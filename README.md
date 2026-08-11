@@ -6,8 +6,7 @@
 [![Testes](https://img.shields.io/badge/testes-19%20passando-brightgreen)](tests/)
 [![Licença](https://img.shields.io/badge/licença-MIT-blue)](LICENSE)
 
-<!-- Depois do deploy no Streamlit Community Cloud, troque o # pela URL do app -->
-▶ **[Demonstração ao vivo](#)** · 📊 [Relatório de exemplo](dados/exemplo/relatorio_conciliacao.xlsx)
+▶ **[Demo — Repasses de plataforma](https://conciliacao-bancaria-automatica-repasses.streamlit.app)** · ▶ **[Demo — Conciliação geral](https://conciliacao-bancaria-automatica-rep.streamlit.app)** · 📊 [Relatório de exemplo](dados/exemplo/relatorio_conciliacao.xlsx)
 
 <!-- Substitua pelo GIF da ferramenta rodando: assets/demo.gif -->
 ![Demonstração](assets/demo.gif)
