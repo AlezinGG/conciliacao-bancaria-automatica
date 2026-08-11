@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Nunca versionar dados reais de cliente
+dados/reais/
+dados/entrada/
+dados/cliente/
