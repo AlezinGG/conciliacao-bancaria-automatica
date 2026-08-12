@@ -13,7 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.repasses import (  # noqa: E402
     ConciliadorRepasses,
     ParametrosRepasse,
+    agregar_por_imovel,
+    agregar_por_proprietario,
     gerar_cenario_plataforma,
+    ratear_por_reserva,
 )
 
 
@@ -100,3 +103,87 @@ def test_reprodutivel():
     a = ConciliadorRepasses().conciliar(ext, raz)["resumo"]
     b = ConciliadorRepasses().conciliar(ext, raz)["resumo"]
     assert a == b
+
+
+def test_rateio_fecha_a_soma_do_lote(cenario):
+    """A soma dos líquidos rateados de um repasse tem que bater com o crédito."""
+    _, raz, _, resultado = cenario
+    rateio = ratear_por_reserva(resultado, raz)
+
+    por_repasse = rateio.groupby("id_extrato")["valor_liquido"].sum()
+    esperado = resultado["repasses"].set_index("id_extrato")["valor_liquido"]
+    diferenca = (por_repasse - esperado).abs()
+    assert (diferenca < 0.01).all()
+
+
+def test_rateio_e_proporcional_ao_bruto():
+    """Reserva com o dobro do bruto recebe o dobro do líquido, dentro do lote."""
+    raz = pd.DataFrame(
+        [
+            {"id_razao": "R1", "data": "2026-06-01", "imovel": "Imovel 01",
+             "proprietario": "Ana", "valor": 1_000.0},
+            {"id_razao": "R2", "data": "2026-06-01", "imovel": "Imovel 02",
+             "proprietario": "Beto", "valor": 500.0},
+        ]
+    )
+    ext = pd.DataFrame([{"id_extrato": "E1", "data": "2026-06-02", "valor": 1_290.0}])
+    resultado = ConciliadorRepasses(ParametrosRepasse(taxa_esperada=0.14)).conciliar(ext, raz)
+    rateio = ratear_por_reserva(resultado, raz)
+
+    liquido_r1 = rateio.set_index("id_razao").loc["R1", "valor_liquido"]
+    liquido_r2 = rateio.set_index("id_razao").loc["R2", "valor_liquido"]
+    assert abs(liquido_r1 - 2 * liquido_r2) < 0.02
+
+
+def test_rateio_com_reserva_de_valor_zero():
+    """
+    Reserva de cortesia (bruto zero) não recebe fatia do líquido nem quebra o rateio.
+
+    O motor de conciliação nunca agrupa uma reserva de valor zero num repasse
+    (ela não move a soma), então o cenário é montado direto sobre o formato de
+    saída de `conciliar()` para exercitar essa borda do rateio isoladamente.
+    """
+    raz = pd.DataFrame(
+        [
+            {"id_razao": "R1", "data": "2026-06-01", "imovel": "Imovel 01",
+             "proprietario": "Ana", "valor": 1_000.0},
+            {"id_razao": "R2", "data": "2026-06-01", "imovel": "Imovel 02",
+             "proprietario": "Beto", "valor": 0.0},
+        ]
+    )
+    resultado = {
+        "repasses": pd.DataFrame(
+            [
+                {
+                    "id_extrato": "E1",
+                    "data": pd.Timestamp("2026-06-02"),
+                    "reservas": 2,
+                    "valor_bruto": 1_000.0,
+                    "taxa_valor": 140.0,
+                    "taxa_percentual": 0.14,
+                    "valor_liquido": 860.0,
+                    "ids_razao": "R1,R2",
+                }
+            ]
+        )
+    }
+    rateio = ratear_por_reserva(resultado, raz)
+
+    linha_zero = rateio.set_index("id_razao").loc["R2"]
+    assert linha_zero["valor_liquido"] == 0.0
+    assert linha_zero["comissao_rateada"] == 0.0
+    assert rateio["valor_liquido"].sum() == pytest.approx(860.0, abs=0.01)
+
+
+def test_agregacao_por_proprietario_e_imovel(cenario):
+    _, raz, _, resultado = cenario
+    rateio = ratear_por_reserva(resultado, raz)
+
+    por_dono = agregar_por_proprietario(rateio)
+    por_imovel = agregar_por_imovel(rateio)
+
+    assert set(por_dono["proprietario"]) <= set(raz["proprietario"])
+    assert set(por_imovel["imovel"]) == set(
+        raz.loc[raz["id_razao"].isin(rateio["id_razao"]), "imovel"]
+    )
+    assert abs(por_dono["valor_liquido"].sum() - rateio["valor_liquido"].sum()) < 0.01

@@ -254,6 +254,94 @@ class ConciliadorRepasses:
         }
 
 
+def ratear_por_reserva(resultado: dict, razao: pd.DataFrame) -> pd.DataFrame:
+    """
+    Distribui o valor líquido de cada repasse entre as reservas que o compõem.
+
+    O rateio é proporcional ao bruto: reserva maior absorve fatia maior da
+    comissão. Arredondar cada parcela em centavos pode deixar sobra — a
+    diferença é atribuída à maior reserva do lote, porque é a que menos
+    distorce percentualmente, garantindo que a soma do lote feche exatamente
+    com o valor creditado.
+    """
+    raz = razao.set_index("id_razao")
+    linhas: list[dict] = []
+
+    for repasse in resultado["repasses"].itertuples():
+        ids = repasse.ids_razao.split(",")
+        grupo = raz.loc[ids]
+        bruto_total = float(grupo["valor"].sum())
+        liquido_total = round(float(repasse.valor_liquido), 2)
+
+        parcelas = []
+        for id_razao, linha in grupo.iterrows():
+            bruto = round(float(linha["valor"]), 2)
+            proporcao = bruto / bruto_total if bruto_total > 0 else 0.0
+            liquido = round(liquido_total * proporcao, 2)
+            parcelas.append(
+                {
+                    "id_razao": id_razao,
+                    "id_extrato": repasse.id_extrato,
+                    "data": repasse.data,
+                    "imovel": linha.get("imovel", ""),
+                    "proprietario": linha.get("proprietario", ""),
+                    "valor_bruto": bruto,
+                    "valor_liquido": liquido,
+                }
+            )
+
+        sobra = round(liquido_total - sum(p["valor_liquido"] for p in parcelas), 2)
+        if sobra != 0 and parcelas:
+            maior = max(parcelas, key=lambda p: p["valor_bruto"])
+            maior["valor_liquido"] = round(maior["valor_liquido"] + sobra, 2)
+
+        for p in parcelas:
+            p["comissao_rateada"] = round(p["valor_bruto"] - p["valor_liquido"], 2)
+
+        linhas.extend(parcelas)
+
+    colunas = [
+        "id_razao",
+        "id_extrato",
+        "data",
+        "imovel",
+        "proprietario",
+        "valor_bruto",
+        "comissao_rateada",
+        "valor_liquido",
+    ]
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def agregar_por_proprietario(rateio: pd.DataFrame) -> pd.DataFrame:
+    """Confere quanto cada proprietário tem a receber no período."""
+    return _agregar_rateio(rateio, "proprietario")
+
+
+def agregar_por_imovel(rateio: pd.DataFrame) -> pd.DataFrame:
+    """Confere quanto cada imóvel gerou de bruto, comissão e líquido."""
+    return _agregar_rateio(rateio, "imovel")
+
+
+def _agregar_rateio(rateio: pd.DataFrame, coluna: str) -> pd.DataFrame:
+    if rateio.empty:
+        return pd.DataFrame(columns=[coluna, "reservas", "valor_bruto", "comissao_rateada", "valor_liquido"])
+    agregado = (
+        rateio.groupby(coluna, as_index=False)
+        .agg(
+            reservas=("id_razao", "count"),
+            valor_bruto=("valor_bruto", "sum"),
+            comissao_rateada=("comissao_rateada", "sum"),
+            valor_liquido=("valor_liquido", "sum"),
+        )
+        .sort_values(coluna)
+        .reset_index(drop=True)
+    )
+    for c in ("valor_bruto", "comissao_rateada", "valor_liquido"):
+        agregado[c] = agregado[c].round(2)
+    return agregado
+
+
 # --------------------------------------------------------------------------- #
 # Dados sintéticos para demonstração
 # --------------------------------------------------------------------------- #
@@ -276,18 +364,31 @@ def gerar_cenario_plataforma(
     import random
     from datetime import date, timedelta
 
+    from faker import Faker
+
     rng = random.Random(seed)
     inicio = date(2026, 6, 1)
 
+    fake = Faker("pt_BR")
+    Faker.seed(seed)
+    n_imoveis = 8
+    proprietario_por_imovel = {
+        f"Imovel {i:02d}": fake.name() for i in range(1, n_imoveis + 1)
+    }
+
     reservas = []
     for i in range(n_reservas):
+        data = inicio + timedelta(days=rng.randint(0, 27))
+        imovel = f"Imovel {rng.randint(1, n_imoveis):02d}"
+        valor = round(rng.uniform(280, 3_200), 2)
         reservas.append(
             {
                 "id_razao": f"R{i:04d}",
-                "data": inicio + timedelta(days=rng.randint(0, 27)),
-                "imovel": f"Imovel {rng.randint(1, 8):02d}",
+                "data": data,
+                "imovel": imovel,
+                "proprietario": proprietario_por_imovel[imovel],
                 "historico": f"Reserva plataforma #{20000 + i}",
-                "valor": round(rng.uniform(280, 3_200), 2),
+                "valor": valor,
             }
         )
     raz = pd.DataFrame(reservas).sort_values("data").reset_index(drop=True)

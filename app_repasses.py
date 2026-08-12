@@ -13,7 +13,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.repasses import ConciliadorRepasses, ParametrosRepasse, gerar_cenario_plataforma
+from src.repasses import (
+    ConciliadorRepasses,
+    ParametrosRepasse,
+    agregar_por_proprietario,
+    gerar_cenario_plataforma,
+    ratear_por_reserva,
+)
 
 st.set_page_config(page_title="Conciliação de Repasses", page_icon="🏠", layout="wide")
 
@@ -107,8 +113,14 @@ if alerta1 or alerta2:
 else:
     st.success("Todos os repasses e reservas foram conciliados.")
 
-aba1, aba2, aba3, aba4 = st.tabs(
-    ["Repasses reconstruídos", "Reservas sem repasse", "Créditos sem origem", "Comissão por repasse"]
+aba1, aba2, aba3, aba4, aba5 = st.tabs(
+    [
+        "Repasses reconstruídos",
+        "Reservas sem repasse",
+        "Créditos sem origem",
+        "Comissão por repasse",
+        "Rateio por proprietário",
+    ]
 )
 
 with aba1:
@@ -139,3 +151,22 @@ with aba4:
             f"máxima {resumo['taxa_max']:.2%}. Variação alta pode indicar mudança de política "
             "da plataforma ou cobrança indevida."
         )
+
+with aba5:
+    if "proprietario" not in razao.columns:
+        st.info(
+            "A planilha de reservas não tem coluna **proprietario** — envie um arquivo "
+            "com essa coluna para ver o rateio."
+        )
+    elif resultado["repasses"].empty:
+        st.info("Nenhum repasse reconstruído para ratear.")
+    else:
+        rateio = ratear_por_reserva(resultado, razao)
+        por_dono = agregar_por_proprietario(rateio)
+        st.caption(
+            "Quanto cada proprietário tem a receber no período, já descontada a "
+            "comissão da plataforma proporcionalmente ao bruto de cada reserva."
+        )
+        st.dataframe(por_dono, width="stretch", hide_index=True)
+        with st.expander("Ver rateio reserva a reserva"):
+            st.dataframe(rateio, width="stretch", hide_index=True)
